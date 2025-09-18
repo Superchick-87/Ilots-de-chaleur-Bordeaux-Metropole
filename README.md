@@ -8,4 +8,8 @@ Visualisation des indices d'îlots de chaleur croisés à plusieurs indicateurs 
 <li>Ménages un seul individu
 <li>Surface / personne
 <li>Ménages vivant en maison
-<li>Ménages propriétaires
+<li>Ménages propriétaires</li></br>
+Fonctionnalités :</br>
+Recherche par adresse, autoplémentation (csv + api)</br>
+Module choix des couleurs pour chaque option du select + export (datas/color-set.csv)</br>
+
