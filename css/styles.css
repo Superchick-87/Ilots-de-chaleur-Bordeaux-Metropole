@@ -17,6 +17,10 @@
      max-height: 80vh;
  }
 
+ .rivieres {
+     fill: rgb(134, 192, 255);
+ }
+
  path.bordeaux {
      fill: none;
      stroke: rgb(0, 0, 0);
