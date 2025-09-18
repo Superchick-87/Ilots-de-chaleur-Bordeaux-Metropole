@@ -12,4 +12,5 @@ Visualisation des indices d'îlots de chaleur croisés à plusieurs indicateurs 
 Fonctionnalités :</br>
 Recherche par adresse, autoplémentation (csv + api)</br>
 Module choix des couleurs pour chaque option du select + export (datas/color-set.csv)</br>
+Récupération des éléments qui composent la carte, communes, grands axes (extract_maps.py)
 
