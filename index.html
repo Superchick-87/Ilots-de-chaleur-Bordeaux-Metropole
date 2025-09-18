@@ -1,0 +1,949 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <script src="https://unpkg.com/simplify-js@1.2.4/simplify.js"></script>
+  <title>SO Infographie - Les ilôts de chaleur</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+
+<body>
+  <!-- <div id="compteur"
+    style="display: none; position: fixed; bottom: 10px; right: 10px; background: rgba(255,255,255,0.9); padding: 8px 12px; border-radius: 8px; font-size: 14px; box-shadow: 0 0 5px rgba(0,0,0,0.2); z-index: 1000;">
+    Visiteurs aujourd’hui : <span id="visites-jour">…</span><br>
+    Total : <span id="visites-total">…</span>
+  </div> -->
+
+  <div class="center fond-recherche">
+
+    <div>
+      <div class="label">Choisir un indicateur</div>
+      <select id="dataSelect">
+        <option value="indice_LCZ_pondéré">Indice d’îlot de chaleur</option>
+        <option value="taux_passoires_pondéré">Taux de passoires thermiques</option>
+        <option value="part_0_3">0-3 ans</option>
+        <option value="part_65p">+65 ans</option>
+        <option value="part_men_pauv">Ménages pauvres</option>
+        <option value="med_nv_vie">Médiane du niveau de vie</option>
+        <option value="part_men_1ind">Ménages un seul individu</option>
+        <option value="surf_pers">Surface/personne</option>
+        <option value="part_men_mais">Ménages vivant en maison</option>
+        <option value="part_men_prop">Ménages propriétaires</option>
+      </select>
+    </div>
+
+    <div id="scale-controls">
+      <div class="label" style="font-size:11px; margin-bottom:8px;">Ajuster l'échelle de couleur</div>
+      <div class="control-row">
+        <input type="color" id="min-color-picker" value="#ffffb2">
+        <button id="swap-colors" title="Inverser les couleurs">↔️</button>
+        <input type="color" id="max-color-picker" value="#b10026">
+      </div>
+      <div class="control-row">
+        <label for="min-range">Min:</label>
+        <input type="range" id="min-range">
+        <span id="min-value-display" class="value-display"></span>
+      </div>
+      <div class="control-row">
+        <label for="max-range">Max:</label>
+        <input type="range" id="max-range">
+        <span id="max-value-display" class="value-display"></span>
+      </div>
+      <div id="scale-buttons" style="text-align: right; margin-top: 5px;">
+        <button id="update-scale">Appliquer</button>
+        <button id="reset-scale">Auto</button>
+        <button id="download-csv">Télécharger la configuration</button>
+      </div>
+    </div>
+
+    <div style="margin-top:8px;">
+      <div class="label">Rechercher une adresse</div>
+      <div class="search-container">
+        <input type="text" id="address" placeholder="Tape une adresse..." autocomplete="off" />
+        <span id="clear-search">×</span>
+        <ul id="suggestions"></ul>
+      </div>
+    </div>
+  </div>
+  <div id="zoom" style="margin-top:8px;">
+    <button id="zoomIn" class="zoom-button">+</button>
+    <button id="zoomOut" class="zoom-button">-</button>
+    <button id="resetView" class="zoom-button">+</button>
+  </div>
+  <div style="display: flex; flex-wrap: wrap;">
+
+    <div style="width: 100%;">
+      <svg id="map" width="600" height="600" viewBox="0 0 600 600" preserveAspectRatio></svg>
+    </div>
+
+    <div id="zoneData" class="container">
+      <div id="zoneDataList">
+        <div class="center">
+          <h3>Méthodologie</h3>
+          <p class="methodo">
+            Pour cartographier les îlots de chaleur de Bordeaux Métropole, <em>Sud Ouest</em> s’est appuyé sur les zones
+            climatiques locales (LCZ) définies par le Cerema. Ces données évaluent la sensibilité de l’aménagement
+            urbain à la formation des îlots de chaleur : plus le bâti est dense, plus cette sensibilité est forte.
+            Elles ont ensuite été croisées avec les indicateurs socio-démographiques fournis par l’Insee dans le fichier
+            Filosofi (2019). Sur des carrés de 200 mètres de côté, cette base renseigne le niveau de vie des habitants,
+            la répartition par tranches d’âge, le nombre de ménages propriétaires, etc.
+            Comme ces carreaux ne correspondent pas au découpage géographique des LCZ établies par le Cerema,
+            des approximations ont été nécessaires. Un indice d’îlot de chaleur a été calculé en pondérant la surface
+            de chaque carreau recoupée par une zone LCZ.
+            D’autres approches, via l’analyse directe de mesures de température, peuvent compléter les données du Cerema
+            pour l’identification des îlots de chaleur.
+          </p>
+          <hr>
+          <p class="sources">
+            <strong>Sources :</strong> Cerema (Zones climatiques locales - LCZ), Insee (Filosofi, 2019) |
+            <strong>Conception & développement :</strong> Noa Charbogne / Nicolas Peyrebrune (SO Infographie)
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tooltip" class="show-tt"></div>
+  <script>
+    // Tableau pour stocker les données d'adresses une fois le fichier CSV chargé
+    let addresses = [];
+    // Variable pour stocker les données géographiques des "Unités de Chaleur Urbaine" (ICU)
+    let icuData = null;
+
+    /**
+     * @function getHeatIndexInfo
+     * @description Détermine le niveau de l'indice de chaleur et sa classe CSS associée.
+     * @param {string|number} index - L'indice de chaleur à évaluer.
+     * @returns {{text: string, className: string}} Un objet contenant le texte et la classe CSS correspondante.
+     */
+    function getHeatIndexInfo(index) {
+      // Convertit l'indice en nombre à virgule flottante
+      const value = parseFloat(index);
+      // Gère les cas où la valeur n'est pas un nombre (NaN)
+      if (isNaN(value)) return { text: "nc", className: "nc" };
+      // Attribue un niveau "très fort" si l'indice est entre 1 et 3
+      if (value >= 1 && value < 3) return { text: "très fort", className: "tres-fort" };
+      // Attribue un niveau "fort" si l'indice est entre 3 et 4
+      if (value >= 3 && value < 4) return { text: "fort", className: "fort" };
+      // Attribue un niveau "moyen" si l'indice est entre 4 et 6
+      if (value >= 4 && value < 6) return { text: "moyen", className: "moyen" };
+      // Attribue un niveau "faible ou variable" si l'indice est inférieur à 1 ou entre 6 et 10
+      if (value < 1 || (value >= 6 && value < 10)) return { text: "faible ou variable", className: "faible" };
+      // Cas par défaut si aucune des conditions n'est remplie
+      return { text: index, className: "nc" };
+    }
+
+    /**
+     * @function isPointInPolygon
+     * @description Vérifie si un point géographique (longitude, latitude) est à l'intérieur d'un polygone.
+     * Utilise l'algorithme "ray casting" (ou "crossings number").
+     * @param {number[]} point - Le point [longitude, latitude].
+     * @param {number[][]} polygon - Le polygone, un tableau de points.
+     * @returns {boolean} Vrai si le point est à l'intérieur, faux sinon.
+     */
+    function isPointInPolygon(point, polygon) {
+      // Coordonnées du point à tester
+      let x = point[0], y = point[1];
+      // Variable de drapeau pour déterminer si le point est à l'intérieur
+      let isInside = false;
+      // Boucle à travers chaque segment du polygone
+      for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+        // Coordonnées des points du segment actuel
+        let xi = polygon[i][0], yi = polygon[i][1];
+        let xj = polygon[j][0], yj = polygon[j][1];
+        // Teste si le segment intersecte un rayon horizontal partant du point
+        let intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+        // Inverse le drapeau si une intersection est trouvée
+        if (intersect) isInside = !isInside;
+      }
+      return isInside;
+    }
+
+    /**
+     * @function findContainingICU
+     * @description Recherche la zone ICU qui contient les coordonnées données.
+     * @param {number} lon - La longitude.
+     * @param {number} lat - La latitude.
+     * @returns {object|null} Les propriétés de la zone ICU trouvée, ou `null` si aucune n'est trouvée.
+     */
+    function findContainingICU(lon, lat) {
+      // Vérifie si les données ICU ont été chargées
+      if (!icuData) return null;
+      // Parcourt toutes les "features" (polygones) dans les données ICU
+      for (const feature of icuData.features) {
+        // Ignore les features sans géométrie
+        if (!feature.geometry) continue;
+        // Gère les polygones simples
+        if (feature.geometry.type === 'Polygon') {
+          // Vérifie si le point est dans le premier (et seul) anneau de coordonnées
+          if (isPointInPolygon([lon, lat], feature.geometry.coordinates[0])) return feature.properties;
+          // Gère les polygones multiples (MultiPolygon)
+        } else if (feature.geometry.type === 'MultiPolygon') {
+          // Parcourt tous les polygones dans la feature
+          for (const polygon of feature.geometry.coordinates) {
+            // Vérifie si le point est dans le premier anneau de coordonnées du polygone actuel
+            if (isPointInPolygon([lon, lat], polygon[0])) return feature.properties;
+          }
+        }
+      }
+      // Retourne null si aucune zone n'est trouvée
+      return null;
+    }
+
+    /**
+     * @async
+     * @function loadCSV
+     * @description Charge un fichier CSV depuis une URL.
+     * @param {string} url - L'URL du fichier CSV.
+     * @returns {Promise<string|null>} Une promesse qui résout avec le contenu du fichier texte, ou `null` en cas d'erreur.
+     */
+    async function loadCSV(url) {
+      try {
+        // Effectue une requête fetch pour obtenir le fichier
+        const response = await fetch(url);
+        // Vérifie si la réponse est valide
+        if (!response.ok) return null;
+        // Retourne le contenu du fichier en tant que texte
+        return await response.text();
+      } catch (error) {
+        // Gère les erreurs de chargement ou de réseau
+        return null;
+      }
+    }
+
+    /**
+     * @function parseAddressCSV
+     * @description Analyse les données d'un fichier CSV d'adresses et les stocke dans le tableau `addresses`.
+     * @param {string} data - Le contenu du fichier CSV sous forme de chaîne de caractères.
+     */
+    function parseAddressCSV(data) {
+      // Divise les données en lignes et retire les espaces superflus
+      const lines = data.trim().split('\n');
+      // Les en-têtes sont ignorés, mais cette ligne les récupère pour référence future
+      const headers = lines[0].split(',');
+      // Mappe chaque ligne restante pour créer un objet adresse et stocke le tout dans le tableau
+      addresses = lines.slice(1).map(line => {
+        // Divise la ligne en colonnes
+        const cols = line.split(',');
+        return {
+          // Assigne chaque colonne à une propriété de l'objet
+          numero: cols[0], nom_voie: cols[1], code_postal: cols[2], code_insee: cols[3],
+          nom_commune: cols[4], lon: parseFloat(cols[5]), lat: parseFloat(cols[6]),
+          // Crée une adresse complète formatée
+          fullAddress: `${cols[0]} ${cols[1]}, ${cols[2]} ${cols[4]}`
+        };
+      });
+    }
+
+    // Fonction anonyme auto-exécutée pour charger les adresses au démarrage de la page
+    (async () => {
+      const addressData = await loadCSV('datas/adresses.csv');
+      // Si les données sont chargées avec succès, les analyser
+      if (addressData) parseAddressCSV(addressData);
+    })();
+
+    // Récupération des éléments du DOM
+    const input = document.getElementById('address'); // Champ de saisie de l'adresse
+    const suggestions = document.getElementById('suggestions'); // Liste des suggestions d'adresses
+    const clearButton = document.getElementById('clear-search'); // Bouton pour effacer la recherche
+    const zoneDataList = document.getElementById('zoneDataList'); // Conteneur pour afficher les données de la zone
+
+    // Ajout d'un écouteur d'événement sur la saisie dans le champ d'adresse
+    input.addEventListener('input', () => {
+      // Affiche ou masque le bouton "effacer" en fonction de la saisie
+      clearButton.style.display = input.value.length > 0 ? 'block' : 'none';
+      // Récupère la requête de l'utilisateur et la normalise
+      const query = input.value.trim().toLowerCase();
+      // Cache les suggestions si la requête est trop courte
+      if (query.length < 2) {
+        suggestions.style.display = 'none';
+        return;
+      }
+      // Filtre les adresses en fonction de la requête et prend les 10 premières
+      const filtered = addresses.filter(addr => addr.fullAddress.toLowerCase().includes(query)).slice(0, 10);
+      // Cache les suggestions s'il n'y a pas de résultats
+      if (filtered.length === 0) {
+        suggestions.style.display = 'none';
+        return;
+      }
+      // Génère le HTML pour les suggestions et les affiche
+      suggestions.innerHTML = filtered.map(addr => `<li style="padding:5px; cursor:pointer;">${addr.fullAddress}</li>`).join('');
+      suggestions.style.display = 'block';
+
+      // Ajoute des écouteurs d'événements de clic à chaque suggestion
+      [...suggestions.children].forEach((li, idx) => {
+        li.addEventListener('click', () => {
+          // Récupère l'adresse sélectionnée
+          const selectedAddress = filtered[idx];
+          // Met à jour le champ de saisie avec l'adresse sélectionnée
+          input.value = selectedAddress.fullAddress;
+          // Cache les suggestions
+          suggestions.style.display = 'none';
+          // Appelle une fonction (définie plus bas) pour placer un marqueur sur la carte
+          setAddressMarker(selectedAddress.lon, selectedAddress.lat);
+          // Recherche les données ICU (indice de chaleur urbain) pour les coordonnées de l'adresse
+          const props = findContainingICU(selectedAddress.lon, selectedAddress.lat);
+
+          // Si des données sont trouvées, affiche les indicateurs
+          if (props) {
+            // Construit un lien Google Maps
+            const addressLink = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedAddress.fullAddress)}`;
+            // Récupère les informations sur l'indice de chaleur
+            const heatIndexInfo = getHeatIndexInfo(props.indice_LCZ_pondéré);
+            // Insère le HTML avec les données de la zone dans le conteneur
+            zoneDataList.innerHTML = `
+              <div id="adresse" class="bloc-adresse">
+                <a href="${addressLink}" target="_blank">${selectedAddress.fullAddress}</a>
+              </div>
+              <div class="organisation-indicateur">  
+                <div class="bloc-indicateur">
+                  <div class="intitule-indice">Indice d’îlot de chaleur</div>
+                  <div class="picto" style=background-image:url('images/Indice-ilot-de-chaleur.png');></div>
+                  <div class="resultat-indice ${heatIndexInfo.className}">${heatIndexInfo.text}</div>
+                </div> 
+                <div class="bloc-indicateur"> 
+                  <div class="intitule-indice">Taux de passoires thermiques</div>
+                  <div class="picto" style=background-image:url('images/Indice-passoire.png');></div>
+                  <div class="resultat-indice">${props.taux_passoires_pondéré || "nc"} %</div>
+                </div>
+                <div class="bloc-indicateur">
+                  <div class="intitule-indice">Part</br>des 0-3 ans</div>
+                  <div class="picto" style=background-image:url('images/Indice-0-3-ans.png');></div>
+                  <div class="resultat-indice"> ${props.part_0_3 || "nc"} %</div>
+                </div>
+                <div class="bloc-indicateur">
+                  <div class="intitule-indice">Part</br>des 65 ans et +</div>
+                  <div class="picto" style=background-image:url('images/Indice-65-ans.png');></div>
+                  <div class="resultat-indice">${props.part_65p || "nc"} %</div>
+                </div>
+                <div class="bloc-indicateur">
+                  <div class="intitule-indice">Part de</br>ménages pauvres</div>
+                  <div class="picto" style=background-image:url('images/Indice-pauvres.png');></div>
+                  <div class="resultat-indice">${props.part_men_pauv || "nc"} %</div>
+                </div>
+                <div class="bloc-indicateur">
+                  <div class="intitule-indice">Médiane</br>du niveau de vie</div>
+                  <div class="picto" style=background-image:url('images/Indice-Mediane-du-niveau-de-vie.png');></div>
+                  <div class="resultat-indice">${props.med_nv_vie || "nc"} €</div>
+                </div>
+                <div class="bloc-indicateur">
+                  <div class="intitule-indice">Part de ménages</br>1 individu</div>
+                  <div class="picto" style=background-image:url('images/Indice-menages-1-individu.png');></div>
+                  <div class="resultat-indice">${props.part_men_1ind || "nc"} %</div>
+                </div>
+                <div class="bloc-indicateur">
+                  <div class="intitule-indice">Surface</br>par personne</div>
+                  <div class="picto" style=background-image:url('images/Indice-surface-pers.png');></div>
+                  <div class="resultat-indice">${props.surf_pers || "nc"} m²</div>
+                </div>
+                <div class="bloc-indicateur">
+                  <div class="intitule-indice">Part</br>de maisons</div>
+                  <div class="picto" style=background-image:url('images/Indice-maisons.png');></div>
+                  <div class="resultat-indice">${props.part_men_mais || "nc"} %</div>
+                </div>
+                 <div class="bloc-indicateur">
+                  <div class="intitule-indice">Part</br>de propriétaires</div>
+                  <div class="picto" style=background-image:url('images/Indice-proprietaires.png');></div>
+                  <div class="resultat-indice">${props.part_men_prop || "nc"} %</div>
+                </div>
+              <div> 
+            `;
+          } else {
+            // Affiche un message si aucune donnée n'est trouvée
+            zoneDataList.innerHTML = `<div>Aucune donnée ICU trouvée pour cette adresse.</div>`;
+          }
+        });
+      });
+    });
+
+    // Ajout d'un écouteur d'événement sur le clic du bouton "effacer"
+    clearButton.addEventListener('click', () => {
+      // Efface le champ de saisie
+      input.value = '';
+      // Cache les suggestions
+      suggestions.style.display = 'none';
+      // Cache le bouton "effacer"
+      clearButton.style.display = 'none';
+      // Rétablit le contenu initial (méthodologie) dans le conteneur de données
+      zoneDataList.innerHTML = `
+  <div class="center">
+    <h3>Méthodologie</h3>
+    <p class="methodo">
+      Pour cartographier les îlots de chaleur de Bordeaux Métropole, <em>Sud Ouest</em> s’est appuyé sur les zones
+      climatiques locales (LCZ) définies par le Cerema. Ces données évaluent la sensibilité de l’aménagement
+      urbain à la formation des îlots de chaleur : plus le bâti est dense, plus cette sensibilité est forte.
+      Elles ont ensuite été croisées avec les indicateurs socio-démographiques fournis par l’Insee dans le fichier
+      Filosofi (2019). Sur des carrés de 200 mètres de côté, cette base renseigne le niveau de vie des habitants,
+      la répartition par tranches d’âge, le nombre de ménages propriétaires, etc.
+      Comme ces carreaux ne correspondent pas au découpage géographique des LCZ établies par le Cerema,
+      des approximations ont été nécessaires. Un indice d’îlot de chaleur a été calculé en pondérant la surface
+      de chaque carreau recoupée par une zone LCZ.
+      D’autres approches, via l’analyse directe de mesures de température, peuvent compléter les données du Cerema
+      pour l’identification des îlots de chaleur.
+    </p>
+    <hr>
+    <p class="sources">
+            <strong>Sources :</strong> Cerema (Zones climatiques locales - LCZ), Insee (Filosofi, 2019) |
+            <strong>Conception & développement :</strong> Noa Charbogne / Nicolas Peyrebrune (SO Infographie)
+          </p>
+  </div>
+`;
+
+      // Appelle une fonction pour cacher le marqueur d'adresse
+      setAddressMarker(null, null);
+    });
+
+    // Ajout d'un écouteur d'événement sur le document pour cacher les suggestions si l'utilisateur clique en dehors
+    document.addEventListener('click', (e) => {
+      const searchContainer = document.querySelector('.search-container');
+      // Si le conteneur de recherche existe et que le clic n'est pas à l'intérieur de celui-ci
+      if (searchContainer && !searchContainer.contains(e.target)) {
+        suggestions.style.display = 'none';
+      }
+    });
+
+  </script>
+
+  <script>
+    // Déclaration de fonctions vides qui seront définies plus tard dans le code
+    let redraw = () => { };
+    let setAddressMarker = (lon, lat) => { };
+
+    // Configuration des indicateurs avec des couleurs de base
+    const indicatorConfig = {
+      // Indice d'îlot de chaleur
+      'indice_LCZ_pondéré': { colors: ["#ffffb2", "#b10026"] },
+      // Taux de passoires thermiques
+      'taux_passoires_pondéré': { colors: ["#ffffb2", "#b10026"] },
+      // Part des 0-3 ans
+      'part_0_3': { colors: ["#edf8e9", "#238b45"] },
+      // Part des 65 ans et plus
+      'part_65p': { colors: ["#f2f0f7", "#54278f"] },
+      // Part de ménages pauvres
+      'part_men_pauv': { colors: ["#ffffb2", "#b10026"] },
+      // Médiane du niveau de vie
+      'med_nv_vie': { colors: ["#b10026", "#ffffb2"] },
+      // Part de ménages d'un individu
+      'part_men_1ind': { colors: ["#eff3ff", "#08519c"] },
+      // Surface par personne
+      'surf_pers': { colors: ["#fee8c8", "#7f2704"] },
+      // Part de maisons
+      'part_men_mais': { colors: ["#fff7bc", "#d95f0e"] },
+      // Part de propriétaires
+      'part_men_prop': { colors: ["#ffffb2", "#e41a1c"] }
+    };
+
+    // Fonction anonyme asynchrone pour initialiser et afficher la carte
+    (async () => {
+      try {
+        // Dimensions de la carte SVG
+        const width = 800, height = 600;
+
+        /**
+         * @function mercatorProjection
+         * @description Projette des coordonnées géographiques (longitude, latitude) en coordonnées de Mercator.
+         * @param {number} lon - La longitude.
+         * @param {number} lat - La latitude.
+         * @returns {number[]} Un tableau de coordonnées [x, y] en projection Mercator.
+         */
+        const mercatorProjection = (lon, lat) => {
+          const R = 6378137; // Rayon de la Terre
+          // Calcul de la coordonnée x
+          const x = R * lon * Math.PI / 180;
+          // Calcul de la coordonnée y
+          const y = R * Math.log(Math.tan((Math.PI / 4) + (lat * Math.PI / 360)));
+          return [x, y];
+        };
+
+        /**
+         * @function extractAllMercatorPoints
+         * @description Extrait tous les points de coordonnées d'un objet GeoJSON et les projette en Mercator.
+         * @param {object} geojson - L'objet GeoJSON.
+         * @returns {number[][]} Un tableau de tous les points projetés.
+         */
+        const extractAllMercatorPoints = geojson => {
+          let points = [];
+          if (!geojson || !geojson.features) return points;
+          geojson.features.forEach(f => {
+            if (!f.geometry) return;
+            const type = f.geometry.type;
+            const coords = f.geometry.coordinates;
+            // Gère les différents types de géométries (Polygon, MultiPolygon, LineString, MultiLineString)
+            if (type === "Polygon") coords.forEach(ring => ring.forEach(c => points.push(mercatorProjection(c[0], c[1]))));
+            else if (type === "MultiPolygon") coords.forEach(poly => poly.forEach(ring => ring.forEach(c => points.push(mercatorProjection(c[0], c[1])))));
+            else if (type === "LineString") coords.forEach(c => points.push(mercatorProjection(c[0], c[1])));
+            else if (type === "MultiLineString") coords.forEach(line => line.forEach(c => points.push(mercatorProjection(c[0], c[1]))));
+          });
+          return points;
+        };
+
+        /**
+         * @function computeMinMax
+         * @description Calcule les valeurs minimale et maximale d'un champ donné dans un GeoJSON.
+         * @param {object} geojson - L'objet GeoJSON.
+         * @param {string} field - Le nom du champ à analyser.
+         * @returns {number[]} Un tableau contenant la valeur minimale et la valeur maximale.
+         */
+        const computeMinMax = (geojson, field) => {
+          let vals = geojson.features.map(f => {
+            let v = f.properties[field];
+            // Convertit les chaînes de caractères en nombres
+            if (typeof v === "string") v = parseFloat(v.replace(",", "."));
+            // Filtre les valeurs qui ne sont pas des nombres
+            return isNaN(v) ? null : v;
+          }).filter(v => v !== null);
+          // Si aucune valeur n'est trouvée, retourne des valeurs par défaut
+          if (vals.length === 0) return [0, 1];
+          // Retourne le min et le max
+          return [Math.min(...vals), Math.max(...vals)];
+        };
+
+        /**
+         * @function lerpColor
+         * @description Interpole linéairement entre deux couleurs.
+         * @param {string} a - La première couleur (format hexadécimal).
+         * @param {string} b - La deuxième couleur (format hexadécimal).
+         * @param {number} t - Le facteur d'interpolation (entre 0 et 1).
+         * @returns {string} La couleur interpolée (format hexadécimal).
+         */
+        const lerpColor = (a, b, t) => {
+          // Convertit les couleurs hexadécimales en valeurs RGB
+          const ah = parseInt(a.replace(/^#/, ''), 16), bh = parseInt(b.replace(/^#/, ''), 16);
+          const ar = ah >> 16, ag = (ah >> 8) & 0xff, ab = ah & 0xff;
+          const br = bh >> 16, bg = (bh >> 8) & 0xff, bb = bh & 0xff;
+          // Calcule les nouvelles valeurs RGB en interpolant
+          const rr = Math.round(ar + (br - ar) * t), rg = Math.round(ag + (bg - ag) * t), rb = Math.round(ab + (bb - ab) * t);
+          // Reconvertit les valeurs RGB en format hexadécimal
+          return "#" + ((1 << 24) + (rr << 16) + (rg << 8) + rb).toString(16).slice(1);
+        };
+
+        // Sélection de l'élément SVG et ajout des couches pour la carte
+        const svg = document.getElementById("map");
+        svg.innerHTML = `<g id="mapGroup"><g id="bordeauxLayerFond"></g><g id="icuLayer"></g><g id="axesLayer"></g><g id="bordeauxLayer"></g></g><g id="markerLayer"></g>`;
+
+        // Chargement des données géographiques
+        icuData = await fetch("datas/ICU_coordos.json").then(r => r.json());
+        const bdxGeoJSON = await fetch("cartes/Quartiers-Bordeaux.geojson").then(r => r.json());
+        const axesGeoJSON = await fetch("cartes/axes_principaux.geojson").then(r => r.json());
+
+        // Création d'une copie simplifiée des données ICU pour de meilleures performances
+        const simplifiedIcuData = JSON.parse(JSON.stringify(icuData));
+        // Simplification de la géométrie des polygones
+        simplifiedIcuData.features.forEach(feature => {
+          if (feature.geometry.type === "Polygon") {
+            const points = feature.geometry.coordinates[0].map(p => ({ x: p[0], y: p[1] }));
+            // Utilisation de l'algorithme de simplification (par ex. Douglas-Peucker)
+            const simplifiedPoints = simplify(points, 0.0001, true);
+            feature.geometry.coordinates[0] = simplifiedPoints.map(p => [p.x, p.y]);
+          } else if (feature.geometry.type === "MultiPolygon") {
+            feature.geometry.coordinates.forEach((polygon, index) => {
+              const points = polygon[0].map(p => ({ x: p[0], y: p[1] }));
+              const simplifiedPoints = simplify(points, 0.0001, true);
+              feature.geometry.coordinates[index][0] = simplifiedPoints.map(p => [p.x, p.y]);
+            });
+          }
+        });
+
+        // Tente de charger les paramètres de couleur et d'échelle depuis un fichier CSV
+        try {
+          const response = await fetch('datas/color-set.csv');
+          if (response.ok) {
+            const csvText = await response.text();
+            const lines = csvText.trim().split('\n');
+            lines.slice(1).forEach(line => {
+              const [key, colorMin, colorMax, valMin, valMax] = line.split(',');
+              if (indicatorConfig[key]) {
+                indicatorConfig[key].colors = [colorMin, colorMax];
+                indicatorConfig[key].min = parseFloat(valMin);
+                indicatorConfig[key].max = parseFloat(valMax);
+              }
+            });
+          }
+        } catch (error) {
+          console.log("Fichier color-set.csv non trouvé ou erreur de chargement. Utilisation des paramètres par défaut.");
+        }
+
+        // Calcule les valeurs min/max automatiques pour chaque indicateur
+        for (const key in indicatorConfig) {
+          const [min, max] = computeMinMax(icuData, key);
+          indicatorConfig[key].autoMin = min;
+          indicatorConfig[key].autoMax = max;
+          // Utilise les valeurs auto si les valeurs du fichier CSV n'ont pas été définies
+          if (indicatorConfig[key].min === undefined) indicatorConfig[key].min = min;
+          if (indicatorConfig[key].max === undefined) indicatorConfig[key].max = max;
+        }
+
+        // Extrait tous les points pour calculer l'échelle et la translation initiales de la carte
+        const allPoints = [...extractAllMercatorPoints(icuData), ...extractAllMercatorPoints(bdxGeoJSON), ...extractAllMercatorPoints(axesGeoJSON)];
+        if (allPoints.length === 0) throw new Error("Aucun point géographique trouvé.");
+
+        // Détermine les coordonnées min et max pour l'affichage de la carte
+        const xs = allPoints.map(p => p[0]), ys = allPoints.map(p => p[1]);
+        const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+
+        // Calcule l'échelle et la translation initiales pour centrer la carte
+        let baseScale = Math.min(width / (maxX - minX), height / (maxY - minY));
+        let baseTranslateX = -minX, baseTranslateY = -minY;
+
+        // Variables de l'état de la carte (zoom, position)
+        let scale = 1, offsetX = 0, offsetY = 0;
+        let dragging = false, dragStart = null;
+        let markerCoordinates = null;
+        let markerElement = null; // Variable pour garder une référence au marqueur
+        let currentField = "indice_LCZ_pondéré"; // L'indicateur affiché par défaut
+
+        // Récupération des éléments du DOM pour les contrôles de la carte
+        const minRange = document.getElementById('min-range');
+        const maxRange = document.getElementById('max-range');
+        const minDisplay = document.getElementById('min-value-display');
+        const maxDisplay = document.getElementById('max-value-display');
+        const minColorPicker = document.getElementById('min-color-picker');
+        const maxColorPicker = document.getElementById('max-color-picker');
+        const swapColorsButton = document.getElementById('swap-colors');
+
+        /**
+         * @function updateControlsForField
+         * @description Met à jour les valeurs et les couleurs des contrôles de l'interface en fonction de l'indicateur sélectionné.
+         * @param {string} field - Le nom de l'indicateur.
+         */
+        const updateControlsForField = (field) => {
+          const config = indicatorConfig[field];
+          const step = ((config.autoMax - config.autoMin) / 100).toFixed(4);
+
+          // Configure les valeurs min, max et le pas des sliders
+          minRange.min = maxRange.min = config.autoMin;
+          minRange.max = maxRange.max = config.autoMax;
+          minRange.step = step > 0 ? step : 0.01;
+
+          // Assigne les valeurs actuelles
+          minRange.value = config.min;
+          maxRange.value = config.max;
+          minDisplay.textContent = config.min.toFixed(2);
+          maxDisplay.textContent = config.max.toFixed(2);
+          minColorPicker.value = config.colors[0];
+          maxColorPicker.value = config.colors[1];
+        };
+
+        // Ajout d'écouteurs d'événements pour les sliders et le bouton de permutation de couleurs
+        minRange.addEventListener('input', () => minDisplay.textContent = parseFloat(minRange.value).toFixed(2));
+        maxRange.addEventListener('input', () => maxDisplay.textContent = parseFloat(maxRange.value).toFixed(2));
+        swapColorsButton.addEventListener('click', () => {
+          const tempColor = minColorPicker.value;
+          minColorPicker.value = maxColorPicker.value;
+          maxColorPicker.value = tempColor;
+        });
+
+        /**
+         * @function polygonToPath
+         * @description Convertit un tableau de coordonnées de polygone en une chaîne de caractères de chemin SVG.
+         * @param {number[][]} coords - Les coordonnées du polygone.
+         * @param {number} tx - Translation en x.
+         * @param {number} ty - Translation en y.
+         * @param {number} s - Échelle.
+         * @returns {string} Le chemin SVG.
+         */
+        const polygonToPath = (coords, tx, ty, s) => {
+          if (!Array.isArray(coords)) return "";
+          return coords.map((pt, i) => {
+            // Projette les coordonnées
+            let [x, y] = mercatorProjection(pt[0], pt[1]);
+            // Applique la translation et l'échelle
+            x = (x + tx) * s;
+            y = height - (y + ty) * s;
+            // Crée le chemin SVG
+            return (i === 0 ? "M" : "L") + x + " " + y;
+          }).join(" ") + " Z"; // Ferme le chemin avec "Z"
+        }
+
+        /**
+         * @function lineToPath
+         * @description Convertit un tableau de coordonnées de ligne en une chaîne de caractères de chemin SVG.
+         * @param {number[][]} coords - Les coordonnées de la ligne.
+         * @param {number} tx - Translation en x.
+         * @param {number} ty - Translation en y.
+         * @param {number} s - Échelle.
+         * @returns {string} Le chemin SVG.
+         */
+        const lineToPath = (coords, tx, ty, s) => {
+          if (!Array.isArray(coords)) return "";
+          return coords.map((pt, i) => {
+            // Projette les coordonnées
+            let [x, y] = mercatorProjection(pt[0], pt[1]);
+            // Applique la translation et l'échelle
+            x = (x + tx) * s;
+            y = height - (y + ty) * s;
+            // Crée le chemin SVG
+            return (i === 0 ? "M" : "L") + x + " " + y;
+          }).join(" ");
+        }
+
+        /**
+         * @function colorFromValue
+         * @description Détermine la couleur d'un polygone en fonction de sa valeur et de l'échelle de couleurs.
+         * @param {number} val - La valeur du champ pour le polygone.
+         * @returns {string} La couleur hexadécimale.
+         */
+        const colorFromValue = (val) => {
+          const config = indicatorConfig[currentField];
+          // Retourne une couleur grise par défaut si la valeur est invalide
+          if (val === null || val === undefined || isNaN(val) || !config) return "#ccc";
+          // Calcule le facteur d'interpolation (t)
+          const t = (val - config.min) / (config.max - config.min);
+          if (isNaN(t) || !isFinite(t)) return "#ccc";
+          // Utilise l'interpolation de couleur
+          return lerpColor(config.colors[0], config.colors[1], Math.min(Math.max(t, 0), 1));
+        };
+
+        // Fonction pour mettre à jour la taille du marqueur en fonction du zoom
+        const updateMarker = () => {
+          if (markerElement) {
+            // Règle le rayon et la largeur de la bordure du marqueur pour qu'ils semblent constants malgré le zoom
+            markerElement.setAttribute("r", 8 / scale);
+            markerElement.setAttribute("stroke-width", 2 / scale);
+          }
+        };
+
+        /**
+         * @function showTooltip
+         * @description Affiche la bulle d'information (tooltip) avec les propriétés d'une zone.
+         * @param {Event} event - L'événement de la souris.
+         * @param {object} props - Les propriétés de la zone ICU.
+         */
+        const showTooltip = (event, props) => {
+          // Ne pas afficher sur les petits écrans
+          if (window.innerWidth < 500) return;
+          const tt = document.getElementById("tooltip");
+          const svgRect = svg.getBoundingClientRect();
+          // Nettoie le nom de la commune
+          const communeName = (props.commune || "nc").toString().replace(/\[|'|\]/g, "");
+          const heatIndexInfo = getHeatIndexInfo(props.indice_LCZ_pondéré);
+          // Crée le HTML pour le tooltip
+          let html = `<div style="margin-bottom:2px">${communeName}</div>`;
+          html += `<strong>Indice d’îlot de chaleur :</strong> <span class="${heatIndexInfo.className}">${heatIndexInfo.text}</span><br>`;
+          html += `<strong>Taux de passoires thermiques :</strong> ${props.taux_passoires_pondéré || "nc"} %<br>`;
+          html += `<strong>0-3 ans :</strong> ${props.part_0_3 || "nc"} %<br><strong>+65 ans :</strong> ${props.part_65p || "nc"} %<br>`;
+          html += `<strong>Ménages pauvres :</strong> ${props.part_men_pauv || "nc"} %<br><strong>Médiane du niveau de vie :</strong> ${props.med_nv_vie || "nc"} €<br>`;
+          html += `<strong>Ménages 1 individu :</strong> ${props.part_men_1ind || "nc"} %<br><strong>Surface/personne :</strong> ${props.surf_pers || "nc"} m2<br>`;
+          html += `<strong>Ménages en maison :</strong> ${props.part_men_mais} %<br><strong>Ménages propriétaires :</strong> ${props.part_men_prop || "nc"} %<br>`;
+          tt.innerHTML = html;
+          tt.style.display = "block";
+          // Positionne le tooltip à gauche ou à droite de la souris
+          const tooltipWidth = tt.offsetWidth;
+          const svgMidpoint = svgRect.left + (svgRect.width / 2);
+          let leftPosition = (event.pageX > svgMidpoint) ? event.pageX - tooltipWidth - 15 : event.pageX + 15;
+          tt.style.left = leftPosition + "px";
+          tt.style.top = (event.pageY + 10) + "px";
+        };
+
+        // Cache la bulle d'information
+        const hideTooltip = () => document.getElementById("tooltip").style.display = "none";
+
+        /**
+         * @function generateAndDownloadCSV
+         * @description Génère un fichier CSV avec les paramètres de couleur et d'échelle et le télécharge.
+         */
+        const generateAndDownloadCSV = () => {
+          let csvContent = "indicateur,couleur_min,couleur_max,valeur_min,valeur_max\n";
+          // Parcourt la configuration des indicateurs et crée le contenu du CSV
+          for (const key in indicatorConfig) {
+            const config = indicatorConfig[key];
+            csvContent += `${key},${config.colors[0]},${config.colors[1]},${config.min},${config.max}\n`;
+          }
+          // Crée un objet Blob et un lien de téléchargement
+          const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+          const link = document.createElement("a");
+          link.setAttribute("href", URL.createObjectURL(blob));
+          link.setAttribute("download", "color-set.csv");
+          link.style.visibility = 'hidden';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        };
+
+        // Récupère les couches de la carte SVG
+        const mapGroup = svg.querySelector("#mapGroup");
+        const markerLayer = svg.querySelector("#markerLayer");
+
+        /**
+         * @function updateTransform
+         * @description Applique les transformations (déplacement et zoom) à la carte SVG.
+         */
+        const updateTransform = () => {
+          const transformValue = `translate(${offsetX}, ${offsetY}) scale(${scale})`;
+          mapGroup.setAttribute('transform', transformValue);
+          markerLayer.setAttribute('transform', transformValue);
+        };
+
+        // Fonction principale de redessin de la carte
+        redraw = () => {
+          // Variables pour le calcul de la projection
+          const tx = baseTranslateX, ty = baseTranslateY, s = baseScale;
+
+          /**
+           * @function drawGeoJSONLayer
+           * @description Fonction générique pour dessiner une couche GeoJSON.
+           * @param {object} geojson - Les données GeoJSON.
+           * @param {string} layerId - L'ID de la couche SVG.
+           * @param {string} className - La classe CSS à appliquer.
+           * @param {Function} toPathFunc - La fonction pour convertir les coordonnées en chemin SVG.
+           * @param {Function} [styleFunc] - Fonction optionnelle pour appliquer des styles supplémentaires.
+           */
+          const drawGeoJSONLayer = (geojson, layerId, className, toPathFunc, styleFunc) => {
+            const layer = svg.querySelector(layerId);
+            layer.innerHTML = "";
+            if (!geojson.features) return;
+            geojson.features.forEach(feature => {
+              if (!feature.geometry) return;
+              const { type, coordinates } = feature.geometry;
+
+              const createPath = (coords) => {
+                const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                path.setAttribute("d", toPathFunc(coords, tx, ty, s));
+                path.setAttribute("class", className);
+                if (styleFunc) styleFunc(path, feature);
+                layer.appendChild(path);
+              };
+
+              // Gère les différents types de géométrie
+              if (type === "Polygon") createPath(coordinates[0]);
+              else if (type === "MultiPolygon") coordinates.forEach(polygonCoords => createPath(polygonCoords[0]));
+              else if (type === "LineString") createPath(coordinates);
+              else if (type === "MultiLineString") coordinates.forEach(lineCoords => createPath(lineCoords));
+            });
+          };
+
+          // Dessin des différentes couches de la carte
+          drawGeoJSONLayer(bdxGeoJSON, "#bordeauxLayerFond", "bordeauxFond", polygonToPath);
+          drawGeoJSONLayer(simplifiedIcuData, "#icuLayer", "icu", polygonToPath, (path, feature) => {
+            let val = feature.properties[currentField];
+            if (typeof val === "string") val = parseFloat(val.replace(",", "."));
+            // Applique la couleur calculée
+            path.setAttribute("fill", colorFromValue(isNaN(val) ? null : val));
+            // Ajoute des écouteurs pour la bulle d'information
+            path.addEventListener("mouseenter", e => showTooltip(e, feature.properties));
+            path.addEventListener("mouseleave", hideTooltip);
+          });
+          drawGeoJSONLayer(axesGeoJSON, "#axesLayer", "axes", lineToPath);
+          drawGeoJSONLayer(bdxGeoJSON, "#bordeauxLayer", "bordeaux", polygonToPath);
+
+          // Met à jour la taille du marqueur et la transformation de la carte
+          updateMarker();
+          updateTransform();
+        }
+
+        // Initialisation des contrôles et de la carte
+        updateControlsForField(currentField);
+        redraw();
+
+        // Ajout des écouteurs d'événements pour le glisser/déposer (pan) de la carte
+        svg.addEventListener("mousedown", e => { dragging = true; dragStart = { x: e.clientX, y: e.clientY }; svg.style.cursor = "grabbing"; });
+        svg.addEventListener("touchstart", e => { if (e.touches.length === 1) { dragging = true; dragStart = { x: e.touches[0].clientX, y: e.touches[0].clientY }; } });
+
+        window.addEventListener("mouseup", () => { dragging = false; svg.style.cursor = "default"; });
+        window.addEventListener("touchend", () => { dragging = false; });
+
+        /**
+         * @function handleMove
+         * @description Gère le déplacement de la carte.
+         * @param {number} x - Coordonnée x du pointeur.
+         * @param {number} y - Coordonnée y du pointeur.
+         */
+        const handleMove = (x, y) => {
+          if (!dragging) return;
+          const dx = x - dragStart.x;
+          const dy = y - dragStart.y;
+          offsetX += dx;
+          offsetY += dy;
+          dragStart = { x, y };
+          updateTransform();
+        };
+
+        window.addEventListener("mousemove", e => { if (dragging) { e.preventDefault(); handleMove(e.clientX, e.clientY); } });
+        window.addEventListener("touchmove", e => { if (dragging && e.touches.length === 1) { e.preventDefault(); handleMove(e.touches[0].clientX, e.touches[0].clientY); } }, { passive: false });
+
+        // Ajout des écouteurs d'événements pour les boutons de zoom
+        document.getElementById("zoomIn").addEventListener("click", () => { scale *= 1.3; updateTransform(); updateMarker(); });
+        document.getElementById("zoomOut").addEventListener("click", () => { scale /= 1.3; updateTransform(); updateMarker(); });
+        document.getElementById("resetView").addEventListener("click", () => { scale = 1; offsetX = 0; offsetY = 0; updateTransform(); updateMarker(); });
+
+        // Ajout d'un écouteur d'événement pour le sélecteur d'indicateurs
+        document.getElementById("dataSelect").addEventListener("change", e => {
+          currentField = e.target.value;
+          updateControlsForField(currentField);
+          redraw();
+        });
+
+        // Ajout d'un écouteur d'événement pour le bouton de mise à jour de l'échelle
+        document.getElementById('update-scale').addEventListener('click', () => {
+          const newMin = parseFloat(minRange.value);
+          const newMax = parseFloat(maxRange.value);
+          if (isNaN(newMin) || isNaN(newMax) || newMin >= newMax) {
+            alert("Veuillez entrer des valeurs valides (min < max).");
+            return;
+          }
+          const config = indicatorConfig[currentField];
+          config.min = newMin;
+          config.max = newMax;
+          config.colors = [minColorPicker.value, maxColorPicker.value];
+          redraw();
+        });
+
+        // Ajout d'un écouteur d'événement pour le bouton de réinitialisation de l'échelle
+        document.getElementById('reset-scale').addEventListener('click', () => {
+          const config = indicatorConfig[currentField];
+          config.min = config.autoMin;
+          config.max = config.autoMax;
+          updateControlsForField(currentField);
+          redraw();
+        });
+
+        // Ajout d'un écouteur d'événement pour le bouton de téléchargement CSV
+        document.getElementById('download-csv').addEventListener('click', generateAndDownloadCSV);
+
+        // Fonction pour placer un marqueur sur la carte
+        setAddressMarker = (lon, lat) => {
+          // Stocke les nouvelles coordonnées du marqueur
+          markerCoordinates = (lon === null) ? null : [lon, lat];
+
+          // Supprime le marqueur existant s'il y en a un
+          if (markerElement) {
+            markerElement.remove();
+            markerElement = null;
+          }
+
+          // Si de nouvelles coordonnées sont fournies, crée un nouveau marqueur
+          if (markerCoordinates) {
+            // Projette les coordonnées
+            let [mx, my] = mercatorProjection(markerCoordinates[0], markerCoordinates[1]);
+            mx = (mx + baseTranslateX) * baseScale;
+            my = height - (my + baseTranslateY) * baseScale;
+
+            // Crée un élément cercle SVG
+            markerElement = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            markerElement.setAttribute("cx", mx);
+            markerElement.setAttribute("cy", my);
+            markerElement.setAttribute("fill", "blue");
+            markerElement.setAttribute("stroke", "white");
+            // Ajoute le marqueur à la couche SVG
+            markerLayer.appendChild(markerElement);
+          }
+
+          // Met à jour la taille du marqueur et la transformation de la carte
+          updateMarker();
+          updateTransform();
+        }
+
+      } catch (e) {
+        // Affiche une erreur si l'initialisation de la carte échoue
+        console.error("Erreur lors de l'initialisation de la carte:", e);
+        alert("Erreur : " + e.message);
+      }
+    })();
+  </script>
+  <!-- <script src="js/compteur.js"></script>
+  <script src="js/temps_site.js"></script> -->
+</body>
+
+</html>

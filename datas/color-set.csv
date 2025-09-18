@@ -1,0 +1,11 @@
+indicateur,couleur_min,couleur_max,valeur_min,valeur_max
+indice_LCZ_pondéré,#ff2600,#ffdad8,2,7
+taux_passoires_pondéré,#d1fcff,#02bcd4,12,38
+part_0_3,#edf8e9,#aceb00,2.1432,6
+part_65p,#fffef0,#ffbb00,12.3032,34
+part_men_pauv,#ffebeb,#ff0000,0,80
+med_nv_vie,#b10026,#ffffb2,10332.31,44347.43
+part_men_1ind,#eff3ff,#08519c,0,95.08
+surf_pers,#fee8c8,#7f2704,22.542,60.9
+part_men_mais,#ffffff,#669c35,0,100
+part_men_prop,#ffffb2,#e41a1c,0,100
